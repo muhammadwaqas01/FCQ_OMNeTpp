@@ -1,20 +1,3 @@
-// Copyright (C) [2025] [Muhammad Waqas]
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
-
 #include "Buffer.h"
 #include "QueuePolicy.h" // Assuming QueuePolicy definitions are used for selecting jobs
 
@@ -47,7 +30,7 @@ cMessage* Buffer::peekNextMessage(int availableCPU) const {
     return queuePolicy->peekNextJob(queue, availableCPU);
 }
 
-cMessage* Buffer::popNextMessage(int availableCPU) {
+cMessage* Buffer::popNextMessage(int availableCPU, int availableMemory, int availableBandwidth) {
     if (isEmpty()) {
         return nullptr; // No message to pop
     }
@@ -83,7 +66,9 @@ void Buffer::printQueueDetails() const {
                << ", Source: " << job->getSenderModule()->getFullName()
                << ", Arrival Time: " << job->par("arrivalTime").doubleValue()
                << ", Service Time: " << job->par("serviceTime").doubleValue()
-               << ", Req. Resources: " << static_cast<int>(job->par("requiredResource").longValue())<< "\n";
+               << ", Req. CPU: " << static_cast<int>(job->par("requiredCPU").longValue())
+               << ", Req. Memory: " << static_cast<int>(job->par("requiredMemory").longValue())
+               << ", Req. Bandwidth: " << static_cast<int>(job->par("requiredBandwidth").longValue()) << "\n";
         }
     }
 }

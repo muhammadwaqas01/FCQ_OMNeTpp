@@ -1,22 +1,3 @@
-// Copyright (C) [2025] [Muhammad Waqas]
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
-
-
-
 #include <omnetpp.h>
 
 using namespace omnetpp;
@@ -59,16 +40,22 @@ void GenericSource::handleMessage(cMessage *msg)
     ASSERT(msg == sendMessageEvent);
 
     cMessage *job = new cMessage(("job-" + sourceId).c_str());
-    int requiredResourceValue = par("requiredResource").intValue();
+    int requiredCPUValue = par("requiredCPU").intValue();
+    int requiredMemoryValue = par("requiredMemory").intValue();
+    int requiredBandwidthValue = par("requiredBandwidth").intValue();
 
     job->addPar("origin").setStringValue(sourceId.c_str());
-    job->addPar("requiredResource").setLongValue(requiredResourceValue);
+    job->addPar("requiredCPU").setLongValue(requiredCPUValue);
+    job->addPar("requiredMemory").setLongValue(requiredMemoryValue);
+    job->addPar("requiredBandwidth").setLongValue(requiredBandwidthValue);
 
     job->addPar("serviceTime").setDoubleValue(par("serviceTime").doubleValue());
     job->setTimestamp();
     // Logging message ID and required resources
     EV << "Generated message from " << sourceId << " with ID: " << job->getId()
-       << ", Required Resource: " << requiredResourceValue<< endl;
+       << ", Required CPU: " << requiredCPUValue
+       << ", Required Memory: " << requiredMemoryValue
+       << ", Required Bandwidth: " << requiredBandwidthValue << endl;
 
 
     send(job, "out");

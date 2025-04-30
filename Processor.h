@@ -1,20 +1,3 @@
-// Copyright (C) [2025] [Muhammad Waqas]
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
-
 #ifndef __PROCESSOR_H
 #define __PROCESSOR_H
 
@@ -35,15 +18,17 @@ class Processor : public cSimpleModule
     cQueue queue;
     Buffer* buffer;
     int bufferSize;
-    long ResourceCapacity;
-
+    long CPUCapacity;
+    long MemoryCapacity;
+    long BandwidthCapacity;
     std::string schedulingPolicy;
     std::vector<cMessage*> activeJobs;
     std::map<cMessage*, cMessage*> endServiceMsgs;
 
 
-    long sumOfOccupiedResource = 0;
-
+    long sumOfOccupiedCPU = 0;
+    long sumOfOccupiedMemory = 0;
+    long sumOfOccupiedBandwidth = 0;
     int checkCounts = 0;
     double checkInterval;
 
@@ -65,7 +50,7 @@ class Processor : public cSimpleModule
 
     QueuePolicy* policy = nullptr; // Policy member variable
 
-    std::vector<int> msgsInBufferCount; // Holds the cumulative number of messages in buffer from each source
+    std::vector<long long> msgsInBufferCount; // Holds the cumulative number of messages in buffer from each source
     std::vector<double> avgMsgsInBuffer; // Holds the average number of messages in buffer from each source
 
   public:
@@ -84,7 +69,9 @@ class Processor : public cSimpleModule
     virtual void processQueue();
     virtual bool canStartNextJob();
     virtual void startNextJob(cMessage *job);
-    long sumOfResourceUsedByActiveJobs();
+    long sumOfCPUUsedByActiveJobs();
+    long sumOfMemoryUsedByActiveJobs();
+    long sumOfBandwidthUsedByActiveJobs();
 
 
     // Utility functions

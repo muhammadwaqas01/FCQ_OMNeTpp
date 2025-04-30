@@ -1,21 +1,3 @@
-// Copyright (C) [2025] [Muhammad Waqas]
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
-
-
 #include "Processor.h"
 #include "Buffer.h"
 #include <fstream>
@@ -43,12 +25,16 @@ void Processor::initialize() {
     QueuePolicy* policy = nullptr;
     if (policyName == "Priority") {
         policy = new PriorityCPUQueuePolicy();
+    } else if (policyName == "MostServerFit") {
+        policy = new MostServerFitQueuePolicy();
     } else {
         policy = new FIFOQueuePolicy(); // Default to FIFO if no valid policy is specified
     }
     buffer = new Buffer(bufferSize, policy);
 
-    ResourceCapacity = par("ResourceCapacity").intValue();
+    CPUCapacity = par("CPUCapacity").intValue();
+    MemoryCapacity = par("MemoryCapacity").intValue();
+    BandwidthCapacity = par("BandwidthCapacity").intValue();
     checkInterval = par("checkInterval").doubleValue();
 
     msgProcessed.resize(2, 0);
@@ -65,7 +51,7 @@ void Processor::initialize() {
     totalResponseTime.resize(2, 0.0);
     responseCount.resize(2, 0);
 
-    msgsInBufferCount.resize(2, 0); // Initialize the buffer count vector
+    msgsInBufferCount.resize(2, 0LL); // Initialize the buffer count vector
     avgMsgsInBuffer.resize(2, 0.0); // Initialize the average buffer vector
 
 
@@ -74,7 +60,9 @@ void Processor::initialize() {
 
     scheduleAt(simTime() + checkInterval, new cMessage("checkResource"));
 
-    EV << "Initialize: Queue system initialized with ResourceCapacity=" << ResourceCapacity
+    EV << "Initialize: Queue system initialized with CPUCapacity=" << CPUCapacity
+       << ", MemoryCapacity=" << MemoryCapacity
+       << ", BandwidthCapacity=" << BandwidthCapacity
        << ", checkInterval=" << checkInterval << endl;
 }
 
@@ -132,7 +120,9 @@ void printQueueDetails(const cQueue &queue) {
                << ", Source: " << job->getSenderModule()->getFullName()
                << ", Service Time: " << job->par("serviceTime").doubleValue()
                << ", Arrival Time: " << job->par("arrivalTime").doubleValue()
-               << ", Req. Resource: " << static_cast<int>(job->par("requiredResource").longValue()) << "\n";
+               << ", Req. CPU: " << static_cast<int>(job->par("requiredCPU").longValue())
+               << ", Req. Memory: " << static_cast<int>(job->par("requiredMemory").longValue())
+               << ", Req. Bandwidth: " << static_cast<int>(job->par("requiredBandwidth").longValue()) << "\n";
         }
     }
 }
@@ -156,7 +146,9 @@ void Processor::printActiveJobsDetails(const std::vector<cMessage*>& activeJobs)
            << ", Source: " << job->getSenderModule()->getFullName()
            << ", Arrival Time: " << job->par("arrivalTime").doubleValue()
            << ", Service Time: " << totalServiceTime
-           << ", Req. CPU: " << static_cast<int>(job->par("requiredResource").longValue())
+           << ", Req. CPU: " << static_cast<int>(job->par("requiredCPU").longValue())
+           << ", Req. Memory: " << static_cast<int>(job->par("requiredMemory").longValue())
+           << ", Req. Bandwidth: " << static_cast<int>(job->par("requiredBandwidth").longValue())
            << ", Remaining Service Time: " << remainingServiceTime << "\n"; // Log the remaining service time
     }
 }
@@ -166,15 +158,20 @@ void Processor::handleResourceCheck() { //Resource usage of active jobs
     checkCounts++;
 
     // Calculate current resource usage
-    long currentResourceUsage = sumOfResourceUsedByActiveJobs();
-
+    long currentCPUUsage = sumOfCPUUsedByActiveJobs();
+    long currentMemoryUsage = sumOfMemoryUsedByActiveJobs();
+    long currentBandwidthUsage = sumOfBandwidthUsedByActiveJobs();
 
     // Accumulate the resource usage
-    sumOfOccupiedResource += currentResourceUsage;
+    sumOfOccupiedCPU += currentCPUUsage;
+    sumOfOccupiedMemory += currentMemoryUsage;
+    sumOfOccupiedBandwidth += currentBandwidthUsage;
 
     // Log the starting point of resource check
     EV << "Resource check at time: " << simTime() << " with " << activeJobs.size() << " active jobs.\n";
-    EV << "Current Resource Usage: " << currentResourceUsage << ", Total: " << sumOfOccupiedResource << "\n";
+    EV << "Current CPU Usage: " << currentCPUUsage << ", Total: " << sumOfOccupiedCPU << "\n";
+    EV << "Current Memory Usage: " << currentMemoryUsage << ", Total: " << sumOfOccupiedMemory << "\n";
+    EV << "Current Bandwidth Usage: " << currentBandwidthUsage << ", Total: " << sumOfOccupiedBandwidth << "\n";
 
     // Calculate and accumulate the number of messages in service for each source
     std::vector<int> currentIntervalCount(2, 0); // Assuming two sources; adjust size as necessary
@@ -209,8 +206,7 @@ void Processor::handleResourceCheck() { //Resource usage of active jobs
     // Record the number of messages in the buffer from each source
     std::vector<int> bufferCounts = buffer->getBufferCountsBySource();
     for (int i = 0; i < bufferCounts.size(); ++i) {
-        msgsInBufferCount[i] += bufferCounts[i];
-        EV << "Total messages from source" << i << " in buffer until now: " << msgsInBufferCount[i] << "\n";
+        msgsInBufferCount[i] += static_cast<long long>(bufferCounts[i]);        EV << "Total messages from source" << i << " in buffer until now: " << msgsInBufferCount[i] << "\n";
     }
 
     // Schedule the next check
@@ -241,40 +237,66 @@ void Processor::handleJobArrival(cMessage* msg) {
 
 void Processor::processQueue() {
     while (!buffer->isEmpty() && canStartNextJob()) {
-        cMessage* nextJob = buffer->popNextMessage(ResourceCapacity);
+        cMessage* nextJob = buffer->popNextMessage(CPUCapacity, MemoryCapacity, BandwidthCapacity);
         if (nextJob) {
             // Now nextJob is declared and can be used
-            long requiredResource = nextJob->par("requiredResource").longValue();
+            long requiredCPU = nextJob->par("requiredCPU").longValue();
+            long requiredMemory = nextJob->par("requiredMemory").longValue();
+            long requiredBandwidth = nextJob->par("requiredBandwidth").longValue();
 
             // Ensure the conditions are met to start the job
-            if (requiredResource <= ResourceCapacity) {
+            if (requiredCPU <= CPUCapacity && requiredMemory <= MemoryCapacity && requiredBandwidth <= BandwidthCapacity) {
                 startNextJob(nextJob);             }
         }
     }
 }
 
-long Processor::sumOfResourceUsedByActiveJobs() {
+long Processor::sumOfCPUUsedByActiveJobs() {
     long totalCPUUsed = 0;
 
     for (const auto& job : activeJobs) {
-        totalCPUUsed += static_cast<int>(job->par("requiredResource").longValue());
+        totalCPUUsed += static_cast<int>(job->par("requiredCPU").longValue());
 
 
     }
     return totalCPUUsed;
 
 }
+long Processor::sumOfMemoryUsedByActiveJobs() {
+    long totalMemoryUsed = 0;
 
+    for (const auto& job : activeJobs) {
+        totalMemoryUsed += static_cast<int>(job->par("requiredMemory").longValue());
+
+
+    }
+    return totalMemoryUsed;
+
+}
+long Processor::sumOfBandwidthUsedByActiveJobs() {
+    long totalbandwidthUsed = 0;
+
+    for (const auto& job : activeJobs) {
+        totalbandwidthUsed += static_cast<int>(job->par("requiredBandwidth").longValue());
+
+
+    }
+    return totalbandwidthUsed;
+
+}
 
 bool Processor::canStartNextJob() {
     // Get the next job, but first, make sure to pass the available CPU resources
-    cMessage* nextJob = buffer->peekNextMessage(ResourceCapacity); // Pass ResourceCapacity as the available CPU
+    cMessage* nextJob = buffer->peekNextMessage(CPUCapacity); // Pass CPUCapacity as the available CPU
     if (!nextJob) return false;
 
-    long requiredResource = static_cast<long>(nextJob->par("requiredResource").longValue());
+    long requiredCPU = static_cast<long>(nextJob->par("requiredCPU").longValue());
+    long requiredMemory = static_cast<long>(nextJob->par("requiredMemory").longValue());
+    long requiredBandwidth = static_cast<long>(nextJob->par("requiredBandwidth").longValue());
 
-
-    return requiredResource <= ResourceCapacity;
+    return requiredCPU <= CPUCapacity &&
+           requiredMemory <= MemoryCapacity &&
+           requiredBandwidth <= BandwidthCapacity;
 }
 
 
@@ -297,11 +319,13 @@ void Processor::startNextJob(cMessage *job) {
     waitingCount[sourceIndex]++;
 
     // Process job resources
-    long requiredResource = static_cast<long>(job->par("requiredResource").longValue());
+    long requiredCPU = static_cast<long>(job->par("requiredCPU").longValue());
+    long requiredMemory = static_cast<long>(job->par("requiredMemory").longValue());
+    long requiredBandwidth = static_cast<long>(job->par("requiredBandwidth").longValue());
 
-
-    ResourceCapacity -= requiredResource; // Update the available resource capacity.
-
+    CPUCapacity -= requiredCPU; // Update the available resource capacity.
+    MemoryCapacity -= requiredMemory; // Update the available resource capacity.
+    BandwidthCapacity -= requiredBandwidth; // Update the available resource capacity.
 
     activeJobs.push_back(job); // Add the job to the list of active jobs.
 
@@ -312,9 +336,12 @@ void Processor::startNextJob(cMessage *job) {
 
     EV << "Resource Update: Job started: ID=" << job->getId()
        << ", SourceID=" << sourceId
-       << ", ConsumedResource=" << requiredResource
-       << ", RemainingResource=" << ResourceCapacity<< ".\n";
-
+       << ", ConsumedCPU=" << requiredCPU
+       << ", ConsumedMemory=" << requiredMemory
+       << ", ConsumedBandwidth=" << requiredBandwidth
+       << ", RemainingCPU=" << CPUCapacity
+       << ", RemainingMemory=" << MemoryCapacity
+       << ", RemainingBandwidth=" << BandwidthCapacity << ".\n";
 
     // After adding the job to active jobs, print the details of all active jobs.
     EV << "After starting new job, active jobs details:\n";
@@ -384,15 +411,22 @@ void Processor::endService(cMessage *msg) {
        << "Cumulative Service Time for this source: " << totalServiceTime[sourceIndex] << "\n";
 
     // Resource release and logging
-    int releasedResource = static_cast<int>(msg->par("requiredResource").longValue());
+    int releasedCPU = static_cast<int>(msg->par("requiredCPU").longValue());
+    int releasedMemory = static_cast<int>(msg->par("requiredMemory").longValue());
+    int releasedBandwidth = static_cast<int>(msg->par("requiredBandwidth").longValue());
 
-    ResourceCapacity += releasedResource;
-
+    CPUCapacity += releasedCPU;
+    MemoryCapacity += releasedMemory;
+    BandwidthCapacity += releasedBandwidth;
 
     EV << "Releasing resources: Job ID=" << msg->getId()
        << ", Source ID=" << sourceId
-       << ", releasedResource=" << releasedResource
-       << ", NewTotalResource=" << ResourceCapacity<< ".\n";
+       << ", releasedCPU=" << releasedCPU
+       << ", releasedMemory=" << releasedMemory
+       << ", releasedBandwidth=" << releasedBandwidth
+       << ", NewTotalCPU=" << CPUCapacity
+       << ", NewTotalMemory=" << MemoryCapacity
+       << ", NewTotalBandwidth=" << BandwidthCapacity << ".\n";
 
     // Remove the job from activeJobs
     auto it = std::find(activeJobs.begin(), activeJobs.end(), msg);
@@ -424,21 +458,39 @@ void Processor::finish() {
 
     if (checkCounts > 0) {
         // Compute average resource usage
-        double avgResourceUsage = sumOfOccupiedResource / checkCounts;
+//        double avgCPUUsage = sumOfOccupiedCPU / checkCounts;
+//        double avgMemoryUsage = sumOfOccupiedMemory / checkCounts;
+//        double avgBandwidthUsage = sumOfOccupiedBandwidth / checkCounts;
+
+        double avgCPUUsage = static_cast<double>(sumOfOccupiedCPU) / checkCounts;
+        double avgMemoryUsage = static_cast<double>(sumOfOccupiedMemory) / checkCounts;
+        double avgBandwidthUsage = static_cast<double>(sumOfOccupiedBandwidth) / checkCounts;
+
 
         // Compute percentage utilization
-        double initialResourceCapacity = par("ResourceCapacity").intValue();
+        double initialCPUCapacity = par("CPUCapacity").intValue();
+        double initialMemoryCapacity = par("MemoryCapacity").intValue();
+        double initialBandwidthCapacity = par("BandwidthCapacity").intValue();
 
-        double avgResourceUtilization = (avgResourceUsage / initialResourceCapacity) * 100.0;
+        double avgCPUUtilization = (avgCPUUsage / initialCPUCapacity) * 100.0;
+        double avgMemoryUtilization = (avgMemoryUsage / initialMemoryCapacity) * 100.0;
+        double avgBandwidthUtilization = (avgBandwidthUsage / initialBandwidthCapacity) * 100.0;
+        EV << "Detailed CPU Utilization: " << (avgCPUUsage / initialCPUCapacity) << "\n";
 
         // Record the average utilizations
-        recordScalar("Resource Utilization (%)", avgResourceUtilization);
+        recordScalar("CPU Utilization (%)", avgCPUUtilization);
+        recordScalar("Memory Utilization (%)", avgMemoryUtilization);
+        recordScalar("Bandwidth Utilization (%)", avgBandwidthUtilization);
 
         // Log the final averages for quick visual confirmation
-        EV << "Final Sum of Resource Usage: " << sumOfOccupiedResource << "\n";
+        EV << "Final Sum of CPU Usage: " << sumOfOccupiedCPU << "\n";
+        EV << "Final Sum of Memory Usage: " << sumOfOccupiedMemory << "\n";
+        EV << "Final Sum of Bandwidth Usage: " << sumOfOccupiedBandwidth << "\n";
         EV << "Total Number of Checks: " << checkCounts << "\n";
 
-        EV << "Average Resource Usage: " << avgResourceUsage << " (" << avgResourceUtilization << "%)\n";
+        EV << "Average CPU Usage: " << avgCPUUsage << " (" << avgCPUUtilization << "%)\n";
+        EV << "Average Memory Usage: " << avgMemoryUsage << " (" << avgMemoryUtilization << "%)\n";
+        EV << "Average Bandwidth Usage: " << avgBandwidthUsage << " (" << avgBandwidthUtilization << "%)\n";
     }
 
     for (int i = 0; i < msgsInServiceCount.size(); ++i) {
@@ -455,6 +507,7 @@ void Processor::finish() {
         }
     }
 
+
     for (int i = 0; i < 2; ++i) {
         if (msgProcessed[i] > 0) {
             double avgServiceTime = totalServiceTime[i] / msgProcessed[i];
@@ -467,6 +520,24 @@ void Processor::finish() {
         recordScalar((sourceId + " Messages Processed").c_str(), msgProcessed[i]);
         recordScalar((sourceId + " Messages Dropped").c_str(), msgDropped[i]);
     }
+
+
+
+    for (int i = 0; i < 2; ++i) {
+        // Compute throughput for source i
+        double simulationTime = SIMTIME_DBL(simTime());  // Get the total simulation time
+        double throughput = (simulationTime > 0) ? (msgProcessed[i] / simulationTime) : 0.0;
+        recordScalar(("Throughput Source " + std::to_string(i)).c_str(), throughput);
+
+        // Compute total jobs generated by source i
+        long totalGenerated = msgProcessed[i] + msgDropped[i];
+
+        // Compute dropping probability for source i
+        double droppingProbability = (totalGenerated > 0) ? (static_cast<double>(msgDropped[i]) / totalGenerated) : 0.0;
+        recordScalar(("Dropping Probability Source " + std::to_string(i)).c_str(), droppingProbability);
+    }
+
+
 
     EV << "Simulation finished. Processed and dropped message statistics per source have been recorded.\n";
 }
